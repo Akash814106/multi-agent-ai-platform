@@ -1,0 +1,352 @@
+import { useState, useEffect } from "react";
+import api from "../api/api";
+
+
+export default function useConversation(user) {
+
+    const conversationKey = user
+        ? `conversations_${user}`
+        : "conversations";
+
+    const activeConversationKey = user
+        ? `activeConversation_${user}`
+        : "activeConversation";
+
+    const [conversations, setConversations] = useState(() => {
+
+        const saved = localStorage.getItem(conversationKey);
+
+        if (saved) {
+
+            return JSON.parse(saved);
+
+        }
+
+        return [
+            {
+                id: 1,
+                title: "New Conversation",
+                messages: [],
+            },
+        ];
+
+    });
+
+    const [activeConversation, setActiveConversation] = useState(() => {
+
+        const saved = localStorage.getItem(activeConversationKey);
+
+        return saved ? Number(saved) : 1;
+
+    });
+
+    const [query, setQuery] = useState("");
+
+    const [loading, setLoading] = useState(false);
+
+    const [thinking, setThinking] = useState(false);
+
+    const [statusList, setStatusList] = useState([]);
+
+    useEffect(() => {
+
+        localStorage.setItem(
+            conversationKey,
+            JSON.stringify(conversations)
+        );
+
+        localStorage.setItem(
+            activeConversationKey,
+            activeConversation
+        );
+
+    }, [conversations, activeConversation]);
+
+
+
+    useEffect(() => {
+
+        const savedConversations = localStorage.getItem(conversationKey);
+
+        if (savedConversations) {
+
+            setConversations(
+                JSON.parse(savedConversations)
+            );
+
+        } else {
+
+            setConversations([
+                {
+                    id: 1,
+                    title: "New Conversation",
+                    messages: [],
+                },
+            ]);
+
+        }
+
+        const savedActive = localStorage.getItem(
+            activeConversationKey
+        );
+
+        setActiveConversation(
+            savedActive ? Number(savedActive) : 1
+        );
+
+    }, [conversationKey, activeConversationKey]);
+
+    
+
+    function createConversation() {
+
+        const newConversation = {
+
+            id: Date.now(),
+
+            title: "New Conversation",
+
+            messages: [],
+
+        };
+
+        setConversations((prev) => [
+
+            ...prev,
+
+            newConversation,
+
+        ]);
+
+        setActiveConversation(newConversation.id);
+
+        setQuery("");
+
+    }
+
+    function renameConversation(id, newTitle) {
+
+        if (!newTitle.trim()) return;
+
+        setConversations((prev) =>
+
+            prev.map((conversation) =>
+
+                conversation.id === id
+
+                    ? {
+
+                        ...conversation,
+
+                        title: newTitle,
+
+                    }
+
+                    : conversation
+
+            )
+
+        );
+
+    }
+
+    function deleteConversation(id) {
+
+        const updatedConversations = conversations.filter(
+            (conversation) => conversation.id !== id
+        );
+
+        setConversations(updatedConversations);
+
+        if (activeConversation === id) {
+
+            if (updatedConversations.length > 0) {
+
+                setActiveConversation(updatedConversations[0].id);
+
+            } else {
+
+                const newConversation = {
+                    id: Date.now(),
+                    title: "New Conversation",
+                    messages: [],
+                };
+
+                setConversations([newConversation]);
+                setActiveConversation(newConversation.id);
+
+            }
+
+        }
+
+    }
+
+    async function sendQuery() {
+
+        if (!query.trim()) return;
+
+        const workflowSteps = [
+            "Query Received",
+            "Memory Retrieved",
+            "Planner Agent",
+            "Research Agent",
+            "Critic Agent",
+            "Revision Agent",
+            "Summary Agent",
+        ];
+
+        setLoading(true);
+        setThinking(true);
+
+        setStatusList([]);
+
+        workflowSteps.forEach((step, index) => {
+
+            setTimeout(() => {
+
+                setStatusList(prev => [...prev, step]);
+
+            }, index * 350);
+
+        });
+
+
+
+        try {
+
+            const token = localStorage.getItem("token");
+
+            const response = await api.post(
+            
+                "/chat",
+            
+                {
+                
+                    query,
+                
+                },
+            
+                {
+                
+                    headers: {
+                    
+                        Authorization: `Bearer ${token}`,
+                    
+                    },
+                
+                }
+            
+            );
+
+            setThinking(false);
+
+            const newMessage = {
+
+                id: Date.now(),
+
+                query,
+
+                result: response.data,
+
+            };
+
+            setConversations((prev) =>
+
+                prev.map((conversation) =>
+
+                    conversation.id === activeConversation
+
+                        ? {
+
+                            ...conversation,
+
+                            title:
+
+                                conversation.messages.length === 0
+
+                                    ? query
+
+                                    : conversation.title,
+
+                            messages: [
+
+                                ...conversation.messages,
+
+                                newMessage,
+
+                            ],
+
+                        }
+
+                        : conversation
+
+                )
+
+            );
+
+            setQuery("");
+
+        }
+
+        catch (error) {
+
+            console.error(error);
+
+            setStatusList([
+
+                "Backend Error"
+
+            ]);
+
+            setThinking(false);
+
+        }
+
+        finally {
+
+            setLoading(false);
+
+        }
+
+    }
+
+    const currentConversation = conversations.find(
+
+        (conversation) =>
+
+            conversation.id === activeConversation
+
+    );
+
+    return {
+
+        conversations,
+
+        activeConversation,
+
+        currentConversation,
+
+        loading,
+
+        thinking,
+
+        statusList,
+
+        query,
+
+        setQuery,
+
+        setActiveConversation,
+
+        createConversation,
+
+        sendQuery,
+
+        renameConversation,
+
+         deleteConversation,
+
+
+    };
+
+}
