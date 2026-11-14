@@ -95,11 +95,11 @@ export default function useConversation(user, account, token) {
         if (activeId === id) setQuery("");
     }
 
-    function sendQuery() {
+    function sendQuery(documentIds = []) {
         const text = query.trim();
         if (!text || request.current) return;
         const conversationId = activeId ?? crypto.randomUUID();
-        const message = { id: crypto.randomUUID(), query: text, status: "pending" };
+        const message = { id: crypto.randomUUID(), query: text, status: "pending", documentIds };
         setHistory((previous) => ({
             activeId: conversationId,
             conversations: previous.activeId === null
@@ -114,7 +114,7 @@ export default function useConversation(user, account, token) {
 
     function retry(message) {
         if (activeId === null || request.current) return;
-        const pending = { id: message.id, query: message.query, status: "pending" };
+        const pending = { id: message.id, query: message.query, status: "pending", documentIds: message.documentIds };
         updateMessage(activeId, message.id, pending);
         void run(activeId, pending);
     }
@@ -133,18 +133,18 @@ export default function useConversation(user, account, token) {
         setLive({ conversationId, messageId: message.id, text: "", activity });
 
         try {
-            const { answer, partial } = await streamChat(message.query, token, controller.signal, (name, event) => {
+            const { answer, partial, sources } = await streamChat(message.query, token, controller.signal, (name, event) => {
                 if (name === "activity") {
                     activity = activity.some((item) => item.id === event.id)
                         ? activity.map((item) => item.id === event.id ? event : item)
                         : [...activity, event];
                     const snapshot = activity;
                     setLive((previous) => ({ ...previous, activity: snapshot }));
-                } else {
+                } else if (name === "delta") {
                     setLive((previous) => ({ ...previous, text: previous.text + event.text }));
                 }
-            });
-            updateMessage(conversationId, message.id, { ...message, status: "complete", answer, activity, partial });
+            }, message.documentIds);
+            updateMessage(conversationId, message.id, { ...message, status: "complete", answer, activity, partial, sources });
         } catch (error) {
             updateMessage(conversationId, message.id, {
                 ...message,

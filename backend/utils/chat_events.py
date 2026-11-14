@@ -118,7 +118,7 @@ def invoke_model(llm, prompt, **kwargs):
     return response
 
 
-def final_answer(llm, prompt, *, stream_answer=True, retry_window=3, **kwargs):
+def final_answer(llm, prompt, *, stream_answer=True, retry_window=3, stream_text=None, **kwargs):
     events = chat_events.get()
     if events is None or not stream_answer:
         text = invoke_model(llm, prompt, **kwargs).content
@@ -144,7 +144,9 @@ def final_answer(llm, prompt, *, stream_answer=True, retry_window=3, **kwargs):
             record_model_usage(chunk)
             if chunk.text:
                 parts.append(chunk.text)
-                events.emit("delta", {"text": chunk.text})
+                visible = stream_text(chunk.text) if stream_text else chunk.text
+                if visible:
+                    events.emit("delta", {"text": visible})
     finally:
         chunks.close()
     text = "".join(parts)

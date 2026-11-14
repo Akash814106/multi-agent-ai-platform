@@ -105,7 +105,8 @@ export default function ChatView({ messages, live, busy, retry, selectPrompt }) 
                             <section className="chat-turn" key={message.id}>
                                 <UserMessage query={message.query} />
                                 {(message.status === "pending" || answer || activity?.length > 0 || message.error) && (
-                                    <AgentMessage message={answer}>
+                                    <AgentMessage message={answer} sources={message.sources}
+                                        documentAnswer={message.documentIds?.length > 0}>
                                         {activity?.length > 0 && <AgentActivity activity={activity} />}
                                         {message.partial && (
                                             <p className="chat-loading" role="status">

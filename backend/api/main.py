@@ -6,8 +6,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo.errors import PyMongoError
 
 from backend.api.chat_stream import stream_chat
+from backend.api.documents import document_http_error, router as document_router
 from backend.api.models import ChatRequest
-from backend.auth.dependencies import get_current_user
+from backend.auth.dependencies import document_owner, get_current_claims
+from backend.documents.answers import answer_documents
+from backend.documents.extraction import DocumentError
 from backend.workflows.multi_agent_workflow import run_workflow
 
 from backend.auth.models import (
@@ -24,6 +27,7 @@ from backend.auth.jwt_handler import create_access_token
 from backend.utils.provider_errors import classify_error, log_failure
 
 app = FastAPI()
+app.include_router(document_router)
 logger = logging.getLogger(__name__)
 
 app.add_middleware(
@@ -126,11 +130,19 @@ def login(request: LoginRequest):
 @app.post("/chat")
 def chat(
     request: ChatRequest,
-    current_user: str = Depends(get_current_user)
+    claims: dict = Depends(get_current_claims),
 ):
-
+    current_user = claims["sub"]
+    owner = document_owner(claims) if request.document_ids else None
     try:
-        result = run_workflow(request.query, current_user)
+        result = (
+            answer_documents(document_query(request), owner, request.document_ids)
+            if request.document_ids else run_workflow(request.query, current_user)
+        )
+    except DocumentError as error:
+        raise document_http_error(error) from None
+    except HTTPException:
+        raise
     except Exception as error:
         log_failure("chat_workflow", error, classify_error(error))
         raise HTTPException(status_code=502, detail="The workflow could not finish. Please retry.") from None
@@ -141,17 +153,27 @@ def chat(
     }
 
 
+def document_query(request):
+    query = request.query.strip()
+    if not 1 <= len(query) <= 2000:
+        raise HTTPException(status_code=422, detail="Enter a document question of 1 to 2,000 characters.")
+    return query
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
-    current_user: str = Depends(get_current_user),
+    claims: dict = Depends(get_current_claims),
 ):
     query = request.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="Enter a message.")
+    owner = document_owner(claims) if request.document_ids else None
+    if request.document_ids:
+        query = document_query(request)
 
     return StreamingResponse(
-        stream_chat(query, current_user),
+        stream_chat(query, claims["sub"], owner=owner, document_ids=request.document_ids),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )

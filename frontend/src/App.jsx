@@ -6,6 +6,7 @@ import Register from "./pages/Register";
 import useAuth from "./hooks/useAuth";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
+import Documents from "./components/Documents";
 import useConversation from "./hooks/useConversation";
 import "./App.css";
 
@@ -21,6 +22,7 @@ function accountFromToken(token) {
 
 function Workspace({ user, account, token, logout }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [selectedDocuments, setSelectedDocuments] = useState([]);
     const menu = useRef(null);
     const composer = useRef(null);
     const chat = useConversation(user, account, token);
@@ -34,6 +36,7 @@ function Workspace({ user, account, token, logout }) {
 
     function selectConversation(id) {
         chat.selectConversation(id);
+        setSelectedDocuments([]);
         closeSidebar();
     }
 
@@ -80,8 +83,9 @@ function Workspace({ user, account, token, logout }) {
                     {chat.storageError && <p className="storage-error" role="status">Chat history could not be saved on this device.</p>}
                     <form className="composer" onSubmit={(event) => {
                         event.preventDefault();
-                        chat.sendQuery();
+                        chat.sendQuery(selectedDocuments);
                     }}>
+                        <Documents token={token} selected={selectedDocuments} setSelected={setSelectedDocuments} />
                         <textarea
                             ref={composer}
                             rows={1}
@@ -92,7 +96,7 @@ function Workspace({ user, account, token, logout }) {
                             onKeyDown={(event) => {
                                 if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                                     event.preventDefault();
-                                    if (!event.repeat) chat.sendQuery();
+                                    if (!event.repeat) chat.sendQuery(selectedDocuments);
                                 }
                             }}
                         />

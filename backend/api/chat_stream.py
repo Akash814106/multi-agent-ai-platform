@@ -6,6 +6,8 @@ from time import monotonic
 
 from starlette.concurrency import run_in_threadpool
 
+from backend.documents.answers import answer_documents
+from backend.documents.extraction import DocumentError
 from backend.utils.chat_events import ChatCancelled, ChatEvents, chat_events
 from backend.utils.provider_errors import classify_error, log_failure
 from backend.workflows.multi_agent_workflow import run_workflow
@@ -14,7 +16,7 @@ from backend.workflows.multi_agent_workflow import run_workflow
 logger = logging.getLogger(__name__)
 
 
-async def stream_chat(query, user):
+async def stream_chat(query, user, *, owner=None, document_ids=()):
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
     stopped = Event()
@@ -42,18 +44,22 @@ async def stream_chat(query, user):
         context_token = chat_events.set(events)
         try:
             events.check_cancelled()
-            result = run_workflow(query, user)
+            result = answer_documents(query, owner, document_ids) if document_ids else run_workflow(query, user)
             answer = result.get("final_summary")
             outcome = result["completion_status"]
             if outcome == "failed" or not answer:
                 emit("error", {"message": "No research tasks produced usable findings. Please retry."})
             else:
                 payload = {"answer": answer}
+                if document_ids:
+                    payload["sources"] = result["sources"]
                 if outcome == "partial":
                     payload["completion_status"] = "partial"
                 emit("done", payload)
         except ChatCancelled:
             outcome = "cancelled"
+        except DocumentError as error:
+            emit("error", {"message": str(error)})
         except Exception as error:
             category = classify_error(error)
             log_failure("chat_workflow", error, category)
