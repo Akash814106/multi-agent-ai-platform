@@ -20,8 +20,9 @@ export async function streamChat(query, token, signal, onEvent, documentIds = []
         if (response.status === 401 || response.status === 403) {
             throw new Error("Your session has expired. Sign out and sign in again.");
         }
-        if (response.status === 422) {
-            throw new Error("Check the document selection and use a question of at most 2,000 characters.");
+        if (response.status === 413 || response.status === 422) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || "Check the message and document selection.");
         }
         if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream")) {
             throw new Error("The chat service is unavailable. Please retry.");

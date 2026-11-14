@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Menu, Square } from "lucide-react";
 
 import Login from "./pages/Login";
@@ -22,15 +22,31 @@ function accountFromToken(token) {
 
 function Workspace({ user, account, token, logout }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [selectedDocuments, setSelectedDocuments] = useState([]);
     const menu = useRef(null);
+    const restoreMenuFocus = useRef(false);
     const composer = useRef(null);
     const chat = useConversation(user, account, token);
     const conversation = chat.conversations.find(({ id }) => id === chat.activeId);
     const activeRun = chat.live?.conversationId === chat.activeId ? chat.live : null;
 
+    useLayoutEffect(() => {
+        if (!sidebarOpen && restoreMenuFocus.current) {
+            restoreMenuFocus.current = false;
+            menu.current?.focus();
+        }
+        if (!sidebarOpen) return;
+
+        const mobile = window.matchMedia("(max-width: 760px)");
+        function closeOnDesktop(event) {
+            if (!event.matches) setSidebarOpen(false);
+        }
+        mobile.addEventListener("change", closeOnDesktop);
+        return () => mobile.removeEventListener("change", closeOnDesktop);
+    }, [sidebarOpen]);
+
     function closeSidebar() {
-        if (sidebarOpen) menu.current.focus();
         setSidebarOpen(false);
     }
 
@@ -41,10 +57,8 @@ function Workspace({ user, account, token, logout }) {
     }
 
     return (
-        <div className="workspace" onKeyDown={(event) => {
-            if (event.key === "Escape" && sidebarOpen) closeSidebar();
-        }}>
-            {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" tabIndex={-1}
+        <div className="workspace">
+            {sidebarOpen && <div className="sidebar-backdrop" aria-hidden="true"
                 onClick={closeSidebar} />}
             <Sidebar
                 user={user}
@@ -54,14 +68,19 @@ function Workspace({ user, account, token, logout }) {
                 renameConversation={chat.renameConversation}
                 deleteConversation={chat.deleteConversation}
                 mobileOpen={sidebarOpen}
+                collapsed={sidebarCollapsed}
+                toggleCollapsed={() => setSidebarCollapsed((value) => !value)}
                 close={closeSidebar}
                 logout={logout}
             />
 
-            <main className="workspace-main">
+            <main className="workspace-main" inert={sidebarOpen}>
                 <header className="workspace-header">
                     <button className="icon-button mobile-menu" ref={menu} type="button" aria-label="Open navigation"
-                        aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={() => setSidebarOpen(true)}>
+                        aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" aria-haspopup="dialog" onClick={() => {
+                            restoreMenuFocus.current = true;
+                            setSidebarOpen(true);
+                        }}>
                         <Menu size={22} />
                     </button>
                     <h1>Chat Workspace</h1>

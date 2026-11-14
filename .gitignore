@@ -48,3 +48,4 @@ Thumbs.db
 # Generated workflow outputs
 workflow_output.json
 workflow_output.txt
+rag_eval_results.json

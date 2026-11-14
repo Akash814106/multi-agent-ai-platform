@@ -10,6 +10,8 @@ from backend.api.models import DocumentId
 from backend.auth.dependencies import get_document_owner
 from backend.documents import store
 from backend.documents.extraction import DocumentError, safe_filename, upload_limit, validate_type
+from backend.utils.provider_errors import log_failure
+from backend.utils.request_trace import request_id
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -79,7 +81,8 @@ async def upload_document(request: Request, owner: str = Depends(get_document_ow
                 emit("done", document)
             except DocumentError as error:
                 emit("error", {"message": str(error)})
-            except Exception:
+            except Exception as error:
+                log_failure("document_index", error, "document_storage")
                 emit("error", {"message": "Document storage is unavailable. Try again."})
 
         # An accepted upload completes indexing even if the browser disconnects.
@@ -92,6 +95,8 @@ async def upload_document(request: Request, owner: str = Depends(get_document_ow
                 except TimeoutError:
                     yield ": heartbeat\n\n"
                     continue
+                if event in {"done", "error"}:
+                    detail = {**detail, "request_id": request_id.get()}
                 yield f"event: {event}\ndata: {json.dumps(detail)}\n\n"
                 if event in {"done", "error"}:
                     break

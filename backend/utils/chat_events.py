@@ -99,7 +99,7 @@ def provider_call(provider, action, *, retry_window=3):
         except Exception as error:
             category = classify_error(error, provider)
             log_failure("provider_call", error, category, provider=provider, attempt=attempt)
-            delay = retry_delay(error, maximum=retry_window) if attempt == 1 else None
+            delay = retry_delay(error, maximum=retry_window, attempt=attempt) if attempt == 1 else None
             if delay is None:
                 raise StepError(category) from error
             wait_to_retry(delay, events.stopped if events else None)

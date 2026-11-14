@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import unittest
 from contextlib import ExitStack, contextmanager
 from threading import Event
@@ -7,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
+import groq
+import httpx
 import requests
 from pymongo.errors import OperationFailure
 
@@ -24,6 +27,7 @@ with patch.dict("os.environ", {
     from backend.graph import nodes
     from backend.utils.chat_events import provider_call, run_step
     from backend.utils.provider_errors import StepError, retry_delay
+    from backend.utils.groq_client import create_groq_client
     from backend.utils.web_search import search_web
     from backend.workflows import task_processor
 
@@ -34,7 +38,7 @@ def tearDownModule():
 
 def events_from(response):
     return [
-        (lines[0].removeprefix("event: "), json.loads(lines[1].removeprefix("data: ")))
+        (lines[0].removeprefix("event: "), {key: value for key, value in json.loads(lines[1].removeprefix("data: ")).items() if key != "request_id"})
         for frame in response.text.strip().split("\n\n")
         if (lines := frame.splitlines()) and lines[0].startswith("event: ")
     ]
@@ -93,6 +97,31 @@ class ChatStreamTests(unittest.TestCase):
                     self.assertEqual(response.json(), {
                         "detail": "Account storage is temporarily unavailable. Please try again later.",
                     })
+
+    def test_chat_input_limits_and_validation_do_not_echo_values(self):
+        private = "private-field-value"
+        for body in [
+            {"query": " "}, {"query": "q" * 12001},
+            {"query": "Hi", "document_ids": [private]},
+            {"query": "Hi", "document_ids": ["a" * 64] * 6},
+            {"query": "q" * 2001, "document_ids": ["a" * 64]},
+        ]:
+            # Include a database user ID so the document-length check is exercised.
+            token = create_access_token({"sub": self.user, "user_id": "test-user"})
+            response = self.client.post("/chat/stream", json=body, headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(response.status_code, 422)
+            self.assertNotIn(private, response.text)
+        oversized = self.client.post("/chat", headers={**self.headers, "Content-Type": "application/json"},
+                                     content='{"query":"' + "q" * 100000 + '"}')
+        self.assertEqual(oversized.status_code, 413)
+        malformed = self.client.post("/chat", headers={**self.headers, "Content-Type": "application/json"},
+                                     content='{"query":"' + private)
+        self.assertEqual(malformed.status_code, 422)
+        self.assertNotIn(private, malformed.text)
+        bad_register = self.client.post("/register", json={"password": {"data": private}})
+        self.assertEqual(bad_register.status_code, 422)
+        self.assertNotIn(private, bad_register.text)
+        self.assertNotEqual(oversized.headers["X-Request-ID"], malformed.headers["X-Request-ID"])
 
     def test_direct_stream_sends_only_visible_chunks_and_safe_activity(self):
         chunks = [SimpleNamespace(text="Hello "), SimpleNamespace(text="🌊"), SimpleNamespace(text="")]
@@ -287,6 +316,28 @@ class ProviderReliabilityTests(unittest.TestCase):
                 task_processor.critic_agent("Goal", "Task", "Research")
         self.assertEqual(caught.exception.category, "invalid_response")
 
+    def test_groq_transient_and_configuration_failures(self):
+        request = httpx.Request("POST", "https://example.invalid")
+        response = httpx.Response(429, request=request, headers={"Retry-After": "1"})
+        rate_limit = groq.RateLimitError("private", response=response, body=None)
+        for failure in (rate_limit, groq.APITimeoutError(request)):
+            action = Mock(side_effect=failure)
+            with patch("backend.utils.chat_events.wait_to_retry"), self.assertRaises(StepError) as caught:
+                provider_call("groq", action)
+            self.assertEqual(action.call_count, 2)
+            self.assertIn(caught.exception.category, {"timeout", "rate_limit"})
+
+        invalid = groq.NotFoundError("private", response=httpx.Response(404, request=request), body=None)
+        action = Mock(side_effect=invalid)
+        with self.assertRaises(StepError) as caught:
+            provider_call("groq", action)
+        action.assert_called_once()
+        self.assertEqual(caught.exception.category, "provider_configuration")
+        without_keys = {key: value for key, value in os.environ.items() if not key.startswith("GROQ_API_KEY")}
+        with patch.dict(os.environ, without_keys, clear=True), self.assertRaises(StepError) as missing:
+            provider_call("groq", lambda: create_groq_client().invoke("question"))
+        self.assertEqual(missing.exception.category, "provider_configuration")
+
     def test_search_requests_source_text_and_ignores_results_without_it(self):
         with patch("backend.utils.web_search.requests.post") as post:
             response = post.return_value.__enter__.return_value
@@ -301,6 +352,27 @@ class ProviderReliabilityTests(unittest.TestCase):
 
 
 class ChatCancellationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_deadline_returns_one_terminal_error(self):
+        finished = Event()
+
+        def run(*_):
+            try:
+                run_step("Working agent", "Waits.", release.wait, 2)
+            finally:
+                finished.set()
+
+        release = Event()
+        with (
+            patch("backend.api.chat_stream.run_workflow", side_effect=run),
+            patch("backend.api.chat_stream.CHAT_DEADLINE_SECONDS", 0.15),
+        ):
+            received = [frame async for frame in stream_chat("Hello", "test")]
+            release.set()
+            self.assertTrue(await asyncio.to_thread(finished.wait, 2))
+        self.assertEqual(sum(frame.startswith("event: error") for frame in received), 1)
+        self.assertIn("timed out", received[-1])
+        self.assertFalse(any(frame.startswith("event: done") for frame in received))
+
     async def test_closing_the_stream_stops_following_agent_calls(self):
         release = Event()
         finished = Event()

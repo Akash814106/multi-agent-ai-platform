@@ -9,17 +9,21 @@ from starlette.concurrency import run_in_threadpool
 from backend.documents.answers import answer_documents
 from backend.documents.extraction import DocumentError
 from backend.utils.chat_events import ChatCancelled, ChatEvents, chat_events
-from backend.utils.provider_errors import classify_error, log_failure
+from backend.utils.provider_errors import chat_failure_message, classify_error, log_failure
+from backend.utils.request_trace import request_id
 from backend.workflows.multi_agent_workflow import run_workflow
 
 
 logger = logging.getLogger(__name__)
+CHAT_DEADLINE_SECONDS = 280
 
 
 async def stream_chat(query, user, *, owner=None, document_ids=()):
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
     stopped = Event()
+    deadline = monotonic() + CHAT_DEADLINE_SECONDS
+    identifier = request_id.get()
 
     def emit(name, data):
         if not stopped.is_set():
@@ -63,16 +67,11 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
         except Exception as error:
             category = classify_error(error)
             log_failure("chat_workflow", error, category)
-            message = (
-                "The AI provider reached its rate limit. Please try again in a moment."
-                if category == "rate_limit"
-                else "The workflow could not finish. Please retry."
-            )
-            emit("error", {"message": message})
+            emit("error", {"message": chat_failure_message(category)})
         finally:
             logger.info(
-                "workflow outcome=%s elapsed_ms=%d stats=%s provider_counts=%s",
-                outcome, round((monotonic() - started) * 1000), stats, events.counts,
+                "request_id=%s workflow outcome=%s elapsed_ms=%d stats=%s provider_counts=%s",
+                identifier, outcome, round((monotonic() - started) * 1000), stats, events.counts,
             )
             chat_events.reset(context_token)
 
@@ -80,14 +79,27 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
     try:
         yield ": connected\n\n"
         while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                name, data = "error", {"message": chat_failure_message("timeout")}
+                stopped.set()
+                logger.warning("request_id=%s workflow deadline reached", identifier)
+                yield sse_frame(name, data, identifier)
+                break
             try:
-                name, data = await asyncio.wait_for(queue.get(), timeout=15)
+                name, data = await asyncio.wait_for(queue.get(), timeout=min(15, remaining))
             except TimeoutError:
                 yield ": heartbeat\n\n"
                 continue
-            yield f"event: {name}\ndata: {json.dumps(data)}\n\n"
+            yield sse_frame(name, data, identifier)
             if name in {"done", "error"}:
                 break
     finally:
         stopped.set()
         worker.cancel()
+
+
+def sse_frame(name, data, identifier):
+    if name in {"done", "error"} and identifier:
+        data = {**data, "request_id": identifier}
+    return f"event: {name}\ndata: {json.dumps(data)}\n\n"

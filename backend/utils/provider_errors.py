@@ -8,6 +8,7 @@ from time import sleep
 import groq
 import requests
 
+from backend.utils.request_trace import request_id
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,10 @@ REASONS = {
     "invalid_response": "The model returned an invalid response.",
     "provider_request": "The external provider rejected the request.",
     "provider_unavailable": "The external provider was temporarily unavailable.",
+    "provider_configuration": "The AI provider credentials or model configuration are unavailable.",
+    "document_storage": "Document storage is temporarily unavailable. Try again.",
+    "document_citation_missing": "The AI reply did not cite the selected documents. Please retry.",
+    "retrieval_busy": "Document retrieval is busy. Try again shortly.",
     "workflow": "This workflow step could not finish.",
     "unknown": "This step failed unexpectedly.",
 }
@@ -47,6 +52,10 @@ def classify_error(error, provider=None):
         return "network"
     if provider == "exa":
         return "search_failure"
+    if isinstance(error, (groq.AuthenticationError, groq.PermissionDeniedError, groq.NotFoundError)):
+        return "provider_configuration"
+    if isinstance(error, groq.BadRequestError) and error.code in {"model_decommissioned", "model_not_found", "invalid_api_key"}:
+        return "provider_configuration"
     if status in {500, 502, 503, 504}:
         return "provider_unavailable"
     if isinstance(error, groq.BadRequestError) and error.code in {"json_validate_failed", "tool_use_failed"}:
@@ -66,12 +75,12 @@ def log_failure(stage, error, category, *, provider=None, attempt=None):
         "json_validate_failed", "tool_use_failed", "rate_limit_exceeded", "invalid_api_key",
     } else None
     logger.warning(
-        "stage=%s provider=%s category=%s exception=%s status=%s code=%s attempt=%s",
-        stage, provider, category, type(error).__name__, status_code(error), known_code, attempt,
+        "request_id=%s stage=%s provider=%s category=%s exception=%s status=%s code=%s attempt=%s",
+        request_id.get(), stage, provider, category, type(error).__name__, status_code(error), known_code, attempt,
     )
 
 
-def retry_delay(error, *, maximum=3):
+def retry_delay(error, *, maximum=3, attempt=1):
     status = status_code(error)
     if status not in {408, 429, 500, 502, 503, 504} and not isinstance(
         error, (groq.APIConnectionError, requests.Timeout, requests.ConnectionError)
@@ -91,7 +100,7 @@ def retry_delay(error, *, maximum=3):
             except ValueError:
                 delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
         else:
-            delay = 1 if status == 429 else 0.5
+            delay = (1 if status == 429 else 0.5) * (2 ** (attempt - 1))
     except (ValueError, TypeError, OverflowError):
         return None
     if not 0 <= delay <= maximum:
@@ -104,3 +113,16 @@ def wait_to_retry(delay, stopped):
         sleep(delay)
     else:
         stopped.wait(delay)
+
+
+def chat_failure_message(category):
+    return {
+        "rate_limit": "The AI provider reached its rate limit. Please try again in a moment.",
+        "timeout": "The request timed out. Please retry.",
+        "network": "Could not connect to the AI provider. Please retry.",
+        "provider_unavailable": REASONS["provider_unavailable"],
+        "provider_configuration": REASONS["provider_configuration"],
+        "document_storage": REASONS["document_storage"],
+        "document_citation_missing": REASONS["document_citation_missing"],
+        "retrieval_busy": REASONS["retrieval_busy"],
+    }.get(category, "The workflow could not finish. Please retry.")

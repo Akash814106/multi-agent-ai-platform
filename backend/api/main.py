@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo.errors import PyMongoError
@@ -24,7 +25,8 @@ from backend.auth.auth import (
     verify_password,
 )
 from backend.auth.jwt_handler import create_access_token
-from backend.utils.provider_errors import classify_error, log_failure
+from backend.utils.provider_errors import chat_failure_message, classify_error, log_failure
+from backend.utils.request_trace import RequestTrace, request_id
 
 app = FastAPI()
 app.include_router(document_router)
@@ -40,19 +42,42 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(RequestTrace)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_input(request, error):
+    fields = {item["loc"][1] for item in error.errors() if (
+        len(item["loc"]) > 1 and item["loc"][0] == "body" and isinstance(item["loc"][1], str)
+    )}
+    detail = "Check the request fields and try again."
+    if request.url.path.rstrip("/") in {"/chat", "/chat/stream"}:
+        if "document_ids" in fields:
+            detail = "Select up to five valid document IDs."
+        elif "query" in fields:
+            detail = "Enter a nonblank message of at most 12,000 characters."
+        else:
+            detail = "Send a valid JSON chat request."
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 
 @app.exception_handler(PyMongoError)
 async def account_database_error(_request, error):
     logger.warning(
-        "Account database request failed (%s, code=%s)",
+        "request_id=%s database request failed (%s, code=%s)",
+        request_id.get(),
         type(error).__name__,
         getattr(error, "code", None),
     )
     return JSONResponse(
         status_code=503,
-        content={"detail": "Account storage is temporarily unavailable. Please try again later."},
+        content={"detail": (
+            "Document storage is temporarily unavailable. Try again."
+            if _request.url.path.startswith("/documents")
+            else "Account storage is temporarily unavailable. Please try again later."
+        )},
     )
 
 
@@ -144,8 +169,9 @@ def chat(
     except HTTPException:
         raise
     except Exception as error:
-        log_failure("chat_workflow", error, classify_error(error))
-        raise HTTPException(status_code=502, detail="The workflow could not finish. Please retry.") from None
+        category = classify_error(error)
+        log_failure("chat_workflow", error, category)
+        raise HTTPException(status_code=502, detail=chat_failure_message(category)) from None
 
     return {
         "user": current_user,
