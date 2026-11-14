@@ -1,167 +1,96 @@
 import { useState } from "react";
-import { Plus, Trash2} from "lucide-react";
+import { Activity, LogOut, MessageSquare, Pencil, Plus, Trash2, Workflow, X } from "lucide-react";
 
-function Sidebar({
-    user,
-    conversations,
-    activeConversation,
-    setActiveConversation,
-    createConversation,
-    renameConversation,
-    deleteConversation,
+export default function Sidebar({
+    user, conversations, activeId, selectConversation, renameConversation, deleteConversation,
+    mobileOpen, close, logout,
 }) {
-
     const [editingId, setEditingId] = useState(null);
-    const [editedTitle, setEditedTitle] = useState("");
+    const [title, setTitle] = useState("");
+
+    function saveTitle(id) {
+        renameConversation(id, title);
+        setEditingId(null);
+    }
 
     return (
-        <aside className="w-80 min-w-80 bg-[#0b1120] border-r border-slate-800 flex flex-col overflow-hidden">
-
-            {/* Header */}
-
-            <div className="p-7 border-b border-slate-800">
-
-                <h1 className="text-4xl font-bold tracking-tight">
-                    AgentFlow
-                </h1>
-
-                <p className="text-blue-400 mt-4 text-lg">
-                    Welcome, {user} 👋
-                </p>
-
-                <p className="text-slate-400 text-sm">
-                    AI Workspace
-                </p>
-
-            </div>
-
-            {/* New Conversation */}
-
-            <div className="p-5">
-
-                <button
-                    onClick={createConversation}
-                    className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 transition rounded-2xl py-4 text-lg font-medium shadow-lg"
-                >
-
-                    <Plus size={22} />
-
-                    New Conversation
-
+        <aside id="workspace-sidebar" className={`workspace-sidebar${mobileOpen ? " is-open" : ""}`}>
+            <div className="sidebar-top">
+                <div className="wordmark">
+                    <span className="brand-mark"><Workflow size={20} /></span>
+                    <span>AgentFlow <b>AI</b></span>
+                </div>
+                <button className="icon-button mobile-close" type="button" aria-label="Close navigation" onClick={close}>
+                    <X size={21} />
                 </button>
-
             </div>
 
-            {/* Conversation List */}
+            <button className="new-chat" type="button" onClick={() => selectConversation(null)}>
+                <Plus size={19} /> New Chat
+            </button>
 
-            <div className="flex-1 overflow-y-auto px-4 space-y-3">
+            <nav className="workspace-nav" aria-label="Workspace">
+                <button className="nav-item current" type="button" aria-current="page" onClick={close}>
+                    <MessageSquare size={16} /> Chat Workspace
+                </button>
+                <button className="nav-item" type="button" disabled>
+                    <Activity size={16} /> Observability <span className="coming-soon">Soon</span>
+                </button>
+            </nav>
 
-                {conversations.map((conversation) => (
-
-                    <div
-                        key={conversation.id}
-                        onClick={() => setActiveConversation(conversation.id)}
-                        onDoubleClick={() => {
-                            setEditingId(conversation.id);
-                            setEditedTitle(conversation.title);
-                        }}
-                        className={`
-
-                            rounded-2xl
-                            cursor-pointer
-                            transition-all
-                            duration-200
-                            p-5
-
-                            ${
-                                activeConversation === conversation.id
-                                    ? "bg-[#1e293b] border border-blue-500 shadow-lg"
-                                    : "hover:bg-[#151d2d] border border-transparent"
-                            }
-
-                        `}
-                    >
-
-                        {editingId === conversation.id ? (
-
-                            <input
-                                autoFocus
-                                value={editedTitle}
-                                onChange={(e) => setEditedTitle(e.target.value)}
-                                onBlur={() => {
-                                    renameConversation(
-                                        conversation.id,
-                                        editedTitle
-                                    );
-                                    setEditingId(null);
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                        renameConversation(
-                                            conversation.id,
-                                            editedTitle
-                                        );
-                                        setEditingId(null);
-                                    }
-                                }}
-                                className="w-full bg-slate-700 rounded-lg px-3 py-2 outline-none"
-                            />
-
-                        ) : (
-
-                            <>
-                                <div className="flex items-start gap-3">
-
-                                    <div className="flex-1 min-w-0">
-                                                        
-                                        <p
-                                            className="font-semibold text-white truncate"
-                                            title={conversation.title}
-                                        >
-                                            {conversation.title}
-                                        </p>
-                                                        
-                                        <p className="text-sm text-slate-400 mt-2">
-                                                        
-                                            {conversation.messages.length} message
-                                            {conversation.messages.length !== 1 && "s"}
-                                                        
-                                        </p>
-                                                        
-                                    </div>
-                                                        
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            deleteConversation(conversation.id);
-                                        }}
-                                        className="
-                                            flex-shrink-0
-                                            p-1
-                                            rounded-md
-                                            text-slate-500
-                                            hover:text-red-400
-                                            hover:bg-slate-700/50
-                                            transition
-                                        "
-                                    >
-                                        <Trash2 size={18} />
+            <section className="history" aria-label="Chat history">
+                <h2>Recent chats</h2>
+                {conversations.length === 0 && <p className="history-empty">Your chats will appear here.</p>}
+                <ul>
+                    {conversations.map((conversation) => (
+                        <li key={conversation.id} className={conversation.id === activeId ? "selected" : ""}>
+                            {editingId === conversation.id ? (
+                                <form className="rename-form" onSubmit={(event) => {
+                                    event.preventDefault();
+                                    saveTitle(conversation.id);
+                                }}>
+                                    <input autoFocus aria-label="Chat title" value={title}
+                                        onChange={(event) => setTitle(event.target.value)}
+                                        onBlur={() => saveTitle(conversation.id)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Escape") {
+                                                event.stopPropagation();
+                                                setEditingId(null);
+                                            }
+                                        }} />
+                                </form>
+                            ) : (
+                                <>
+                                    <button type="button" className="history-title" title={conversation.title}
+                                        aria-current={conversation.id === activeId ? "true" : undefined}
+                                        onClick={() => selectConversation(conversation.id)}>
+                                        {conversation.title}
                                     </button>
-                                    
-                                </div>
+                                    <button className="icon-button history-action" type="button" aria-label={`Rename ${conversation.title}`}
+                                        onClick={() => {
+                                            setTitle(conversation.title);
+                                            setEditingId(conversation.id);
+                                        }}>
+                                        <Pencil size={14} />
+                                    </button>
+                                    <button className="icon-button history-action delete-chat" type="button" aria-label={`Delete ${conversation.title}`}
+                                        onClick={() => deleteConversation(conversation.id)}>
+                                        <Trash2 size={14} />
+                                    </button>
+                                </>
+                            )}
+                        </li>
+                    ))}
+                </ul>
+            </section>
 
-                            </>
-
-                        )}
-
-                    </div>
-
-                ))}
-
+            <div className="profile">
+                <span className="profile-avatar" aria-hidden="true">{user.charAt(0).toUpperCase() || "A"}</span>
+                <span className="profile-name" title={user}>{user}</span>
+                <button className="icon-button" type="button" aria-label="Sign out" title="Sign out" onClick={logout}>
+                    <LogOut size={18} />
+                </button>
             </div>
-
         </aside>
     );
 }
-
-export default Sidebar;

@@ -1,17 +1,20 @@
-from backend.utils.env_loader import *
-import os
-from langchain_groq import ChatGroq
+from backend.utils.groq_client import create_groq_client
 
 
+def main():
+    llm = create_groq_client(1)
+    try:
+        answer = "".join(chunk.text for chunk in llm.stream("Say hello in one short sentence."))
+    except Exception as error:
+        print(f"Groq request failed: {type(error).__name__}, status={getattr(error, 'status_code', None)}, code={getattr(error, 'code', None)}")
+        return 1
 
-groq_api_key = os.getenv("GROQ_API_KEY")
+    if not answer.strip():
+        print("Groq returned an empty answer.")
+        return 1
+    print(f"Received a streamed answer from {llm.model_name}.")
+    return 0
 
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    api_key=groq_api_key
-)
 
-response = llm.invoke("Explain what is AI agent in one sentence?")
-
-print("\nAI Response : ")
-print(response.content)
+if __name__ == "__main__":
+    raise SystemExit(main())

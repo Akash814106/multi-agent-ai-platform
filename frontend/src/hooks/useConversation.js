@@ -1,352 +1,166 @@
-import { useState, useEffect } from "react";
-import api from "../api/api";
+import { useEffect, useRef, useState } from "react";
+import { streamChat } from "../api/chatStream";
 
+function readStorage(key, fallback) {
+    try {
+        return JSON.parse(localStorage.getItem(key)) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
 
-export default function useConversation(user) {
-
-    const conversationKey = user
-        ? `conversations_${user}`
-        : "conversations";
-
-    const activeConversationKey = user
-        ? `activeConversation_${user}`
-        : "activeConversation";
-
-    const [conversations, setConversations] = useState(() => {
-
-        const saved = localStorage.getItem(conversationKey);
-
-        if (saved) {
-
-            return JSON.parse(saved);
-
-        }
-
-        return [
-            {
-                id: 1,
-                title: "New Conversation",
-                messages: [],
-            },
-        ];
-
-    });
-
-    const [activeConversation, setActiveConversation] = useState(() => {
-
-        const saved = localStorage.getItem(activeConversationKey);
-
-        return saved ? Number(saved) : 1;
-
-    });
-
-    const [query, setQuery] = useState("");
-
-    const [loading, setLoading] = useState(false);
-
-    const [thinking, setThinking] = useState(false);
-
-    const [statusList, setStatusList] = useState([]);
-
-    useEffect(() => {
-
-        localStorage.setItem(
-            conversationKey,
-            JSON.stringify(conversations)
-        );
-
-        localStorage.setItem(
-            activeConversationKey,
-            activeConversation
-        );
-
-    }, [conversations, activeConversation]);
-
-
-
-    useEffect(() => {
-
-        const savedConversations = localStorage.getItem(conversationKey);
-
-        if (savedConversations) {
-
-            setConversations(
-                JSON.parse(savedConversations)
-            );
-
-        } else {
-
-            setConversations([
-                {
-                    id: 1,
-                    title: "New Conversation",
-                    messages: [],
-                },
-            ]);
-
-        }
-
-        const savedActive = localStorage.getItem(
-            activeConversationKey
-        );
-
-        setActiveConversation(
-            savedActive ? Number(savedActive) : 1
-        );
-
-    }, [conversationKey, activeConversationKey]);
-
-    
-
-    function createConversation() {
-
-        const newConversation = {
-
-            id: Date.now(),
-
-            title: "New Conversation",
-
-            messages: [],
-
+function initialHistory(historyKey, user, account) {
+    const saved = readStorage(historyKey, null);
+    if (saved && Array.isArray(saved.conversations)) {
+        return {
+            ...saved,
+            conversations: saved.conversations.map((conversation) => ({
+                ...conversation,
+                messages: conversation.messages.map((message) => message.status === "pending"
+                    ? { ...message, status: "error", error: "The response was interrupted. Please retry." }
+                    : message),
+            })),
         };
-
-        setConversations((prev) => [
-
-            ...prev,
-
-            newConversation,
-
-        ]);
-
-        setActiveConversation(newConversation.id);
-
-        setQuery("");
-
     }
 
-    function renameConversation(id, newTitle) {
+    // The previous workspace stored conversations by username. Match the account
+    // recorded by the authenticated chat endpoint before importing a message.
+    const legacy = readStorage(`conversations_${user}`, []);
+    const conversations = Array.isArray(legacy) ? legacy.flatMap((conversation) => {
+        if (!Array.isArray(conversation?.messages)) return [];
+        const messages = conversation.messages
+            .filter((message) => message?.result?.user === account)
+            .map((message) => ({
+                id: message.id,
+                query: message.query,
+                answer: message.result.response?.final_summary,
+                status: "complete",
+            }));
+        if (!messages.length) return [];
+        return [{
+            id: conversation.id,
+            title: messages.length === conversation.messages.length ? conversation.title : messages[0].query,
+            messages,
+        }];
+    }).reverse() : [];
+    const activeId = readStorage(`activeConversation_${user}`, null);
+    return { conversations, activeId: conversations.some(({ id }) => id === activeId) ? activeId : null };
+}
 
-        if (!newTitle.trim()) return;
+export default function useConversation(user, account, token) {
+    const historyKey = `agentflow.history:${account}`;
+    const [history, setHistory] = useState(() => initialHistory(historyKey, user, account));
+    const [query, setQuery] = useState("");
+    const [live, setLive] = useState(null);
+    const [storageError, setStorageError] = useState(false);
+    const request = useRef(null);
+    const { conversations, activeId } = history;
 
-        setConversations((prev) =>
+    useEffect(() => {
+        let failed = false;
+        try {
+            localStorage.setItem(historyKey, JSON.stringify(history));
+        } catch {
+            failed = true;
+        }
+        queueMicrotask(() => setStorageError(failed));
+    }, [history, historyKey]);
 
-            prev.map((conversation) =>
+    useEffect(() => () => request.current?.abort(), []);
 
-                conversation.id === id
+    function selectConversation(id) {
+        setHistory((previous) => ({ ...previous, activeId: id }));
+        setQuery("");
+    }
 
-                    ? {
+    function updateConversation(id, update) {
+        setHistory((previous) => ({
+            ...previous,
+            conversations: previous.conversations.map((conversation) =>
+                conversation.id === id ? update(conversation) : conversation),
+        }));
+    }
 
-                        ...conversation,
-
-                        title: newTitle,
-
-                    }
-
-                    : conversation
-
-            )
-
-        );
-
+    function renameConversation(id, title) {
+        const trimmed = title.trim();
+        if (trimmed) updateConversation(id, (conversation) => ({ ...conversation, title: trimmed }));
     }
 
     function deleteConversation(id) {
-
-        const updatedConversations = conversations.filter(
-            (conversation) => conversation.id !== id
-        );
-
-        setConversations(updatedConversations);
-
-        if (activeConversation === id) {
-
-            if (updatedConversations.length > 0) {
-
-                setActiveConversation(updatedConversations[0].id);
-
-            } else {
-
-                const newConversation = {
-                    id: Date.now(),
-                    title: "New Conversation",
-                    messages: [],
-                };
-
-                setConversations([newConversation]);
-                setActiveConversation(newConversation.id);
-
-            }
-
-        }
-
+        if (live?.conversationId === id) request.current?.abort();
+        setHistory((previous) => ({
+            activeId: previous.activeId === id ? null : previous.activeId,
+            conversations: previous.conversations.filter((conversation) => conversation.id !== id),
+        }));
+        if (activeId === id) setQuery("");
     }
 
-    async function sendQuery() {
+    function sendQuery() {
+        const text = query.trim();
+        if (!text || request.current) return;
+        const conversationId = activeId ?? crypto.randomUUID();
+        const message = { id: crypto.randomUUID(), query: text, status: "pending" };
+        setHistory((previous) => ({
+            activeId: conversationId,
+            conversations: previous.activeId === null
+                ? [{ id: conversationId, title: text.replace(/\s+/g, " ").slice(0, 72), messages: [message] }, ...previous.conversations]
+                : previous.conversations.map((conversation) => conversation.id === conversationId
+                    ? { ...conversation, messages: [...conversation.messages, message] }
+                    : conversation),
+        }));
+        setQuery("");
+        void run(conversationId, message);
+    }
 
-        if (!query.trim()) return;
+    function retry(message) {
+        if (activeId === null || request.current) return;
+        const pending = { id: message.id, query: message.query, status: "pending" };
+        updateMessage(activeId, message.id, pending);
+        void run(activeId, pending);
+    }
 
-        const workflowSteps = [
-            "Query Received",
-            "Memory Retrieved",
-            "Planner Agent",
-            "Research Agent",
-            "Critic Agent",
-            "Revision Agent",
-            "Summary Agent",
-        ];
+    function updateMessage(conversationId, messageId, replacement) {
+        updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((message) => message.id === messageId ? replacement : message),
+        }));
+    }
 
-        setLoading(true);
-        setThinking(true);
-
-        setStatusList([]);
-
-        workflowSteps.forEach((step, index) => {
-
-            setTimeout(() => {
-
-                setStatusList(prev => [...prev, step]);
-
-            }, index * 350);
-
-        });
-
-
+    async function run(conversationId, message) {
+        const controller = new AbortController();
+        request.current = controller;
+        let activity = [];
+        setLive({ conversationId, messageId: message.id, text: "", activity });
 
         try {
-
-            const token = localStorage.getItem("token");
-
-            const response = await api.post(
-            
-                "/chat",
-            
-                {
-                
-                    query,
-                
-                },
-            
-                {
-                
-                    headers: {
-                    
-                        Authorization: `Bearer ${token}`,
-                    
-                    },
-                
+            const { answer, partial } = await streamChat(message.query, token, controller.signal, (name, event) => {
+                if (name === "activity") {
+                    activity = activity.some((item) => item.id === event.id)
+                        ? activity.map((item) => item.id === event.id ? event : item)
+                        : [...activity, event];
+                    const snapshot = activity;
+                    setLive((previous) => ({ ...previous, activity: snapshot }));
+                } else {
+                    setLive((previous) => ({ ...previous, text: previous.text + event.text }));
                 }
-            
-            );
-
-            setThinking(false);
-
-            const newMessage = {
-
-                id: Date.now(),
-
-                query,
-
-                result: response.data,
-
-            };
-
-            setConversations((prev) =>
-
-                prev.map((conversation) =>
-
-                    conversation.id === activeConversation
-
-                        ? {
-
-                            ...conversation,
-
-                            title:
-
-                                conversation.messages.length === 0
-
-                                    ? query
-
-                                    : conversation.title,
-
-                            messages: [
-
-                                ...conversation.messages,
-
-                                newMessage,
-
-                            ],
-
-                        }
-
-                        : conversation
-
-                )
-
-            );
-
-            setQuery("");
-
+            });
+            updateMessage(conversationId, message.id, { ...message, status: "complete", answer, activity, partial });
+        } catch (error) {
+            updateMessage(conversationId, message.id, {
+                ...message,
+                status: "error",
+                error: controller.signal.aborted ? "Response stopped." : error.message,
+                activity: activity.filter((item) => item.status === "completed" || item.status === "failed"),
+            });
+        } finally {
+            request.current = null;
+            setLive(null);
         }
-
-        catch (error) {
-
-            console.error(error);
-
-            setStatusList([
-
-                "Backend Error"
-
-            ]);
-
-            setThinking(false);
-
-        }
-
-        finally {
-
-            setLoading(false);
-
-        }
-
     }
 
-    const currentConversation = conversations.find(
-
-        (conversation) =>
-
-            conversation.id === activeConversation
-
-    );
-
     return {
-
-        conversations,
-
-        activeConversation,
-
-        currentConversation,
-
-        loading,
-
-        thinking,
-
-        statusList,
-
-        query,
-
-        setQuery,
-
-        setActiveConversation,
-
-        createConversation,
-
-        sendQuery,
-
-        renameConversation,
-
-         deleteConversation,
-
-
+        conversations, activeId, query, setQuery, live, storageError,
+        selectConversation, renameConversation, deleteConversation, sendQuery, retry,
+        cancel: () => request.current?.abort(),
     };
-
 }

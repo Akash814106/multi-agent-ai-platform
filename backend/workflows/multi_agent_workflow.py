@@ -35,8 +35,6 @@ def run_workflow(user_query, current_user):
 
         "results": [],
 
-        "summary_list": [],
-
         "final_summary": "",
 
         "metrics": {},
@@ -126,6 +124,8 @@ def run_workflow(user_query, current_user):
 
             "final_summary": state.get("final_summary"),
 
+            "completion_status": state.get("completion_status", "complete"),
+
             "metrics": vars(metrics),
 
         }
@@ -144,7 +144,9 @@ def run_workflow(user_query, current_user):
 
         "results": state.get("results", []),
         
-        "final_summary": state.get("final_summary", ""),
+        "final_summary": state.get("final_summary") or "No research tasks produced usable findings. Please retry.",
+
+        "completion_status": state.get("completion_status", "failed"),
 
         "metrics": vars(metrics),
 
@@ -158,11 +160,9 @@ def run_workflow(user_query, current_user):
 
             "Planning Completed",
 
-            "Research Completed",
+            "Research and review attempted",
 
-            "Critic Completed",
-
-            "Summary Generated",
+            *(["Summary Generated"] if state.get("final_summary") else []),
 
         ],
 

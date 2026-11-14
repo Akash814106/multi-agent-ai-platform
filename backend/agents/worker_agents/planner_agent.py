@@ -1,17 +1,10 @@
-from backend.utils.env_loader import *
-import os
-from langchain_groq import ChatGroq
 from backend.utils.api_counter import increment
+from backend.utils.chat_events import invoke_model
+from backend.utils.groq_client import create_groq_client
 
 
 
-groq_api_key1 = os.getenv("GROQ_API_KEY1")
-
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    # model="llama-3.1-8b-instant",
-    api_key= groq_api_key1
-)
+llm = create_groq_client(1)
 
 def planner_agent(user_query):
 
@@ -38,8 +31,8 @@ def planner_agent(user_query):
     - Do not create tasks that significantly overlap with each other.
     - Do not generate redundant tasks.
     - Do not generate implementation details unless explicitly requested.
-    - Generate between 5 and 8 tasks.
-    - Never generate more than 8 tasks.
+    - Generate 2 to 4 tasks that collectively cover the complete request.
+    - Group related items and keep the most important coverage first.
     
     Task Planning Guidelines:
     
@@ -98,12 +91,10 @@ def planner_agent(user_query):
     1. <task>
     2. <task>
     3. <task>
-    4. <task>
-    5. <task>
-    ...
+    4. <task, if needed>
     """
 
     increment("planner")
-    reponse = llm.invoke(prompt)
+    reponse = invoke_model(llm, prompt, max_tokens=400)
 
     return reponse.content

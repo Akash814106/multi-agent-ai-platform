@@ -1,16 +1,9 @@
-from backend.utils.env_loader import *
-import os
-from langchain_groq import ChatGroq
 from backend.utils.api_counter import increment
+from backend.utils.chat_events import invoke_model
+from backend.utils.groq_client import create_groq_client
 
 
-groq_api_key1 = os.getenv("GROQ_API_KEY1")
-
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    # model="llama-3.1-8b-instant",
-    api_key= groq_api_key1
-)
+llm = create_groq_client(1)
 
 def query_enhancement_agent(user_query):
 
@@ -69,5 +62,5 @@ def query_enhancement_agent(user_query):
     """
 
     increment("query_enhancement")
-    response = llm.invoke(prompt)
+    response = invoke_model(llm, prompt)
     return response.content.strip()

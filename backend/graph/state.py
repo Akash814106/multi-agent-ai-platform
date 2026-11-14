@@ -21,8 +21,7 @@ class AgentState(TypedDict):
 
     results: NotRequired[List[Dict[str, Any]]]
 
-    summary_list: NotRequired[List[str]]
-
     final_summary: NotRequired[str]
+    completion_status: NotRequired[str]
 
     metrics: NotRequired[Dict[str, Any]]

@@ -1,4 +1,5 @@
 import chromadb
+from uuid import uuid4
 
 client = chromadb.PersistentClient(path="./chroma_db")
 
@@ -19,7 +20,7 @@ def save_memory(
                 "user_email": user_email
             }
         ],
-        ids=[str(collection.count() + 1)]
+        ids=[uuid4().hex]
     )
 
 

@@ -1,17 +1,11 @@
-from backend.utils.env_loader import *
-import os
 import json
-from langchain_groq import ChatGroq
 from backend.utils.api_counter import increment
+from backend.utils.chat_events import invoke_model
+from backend.utils.groq_client import create_groq_client
+from backend.utils.provider_errors import StepError
 
 
-groq_api_key3 = os.getenv("GROQ_API_KEY3")
-
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    # model="llama-3.1-8b-instant",
-    api_key= groq_api_key3
-)
+llm = create_groq_client(3)
 
 def critic_agent(goal, task, research_result):
     
@@ -88,6 +82,7 @@ def critic_agent(goal, task, research_result):
     - Major inaccuracies or missing information.
 
     Return ONLY valid JSON.
+    Keep the whole review under 120 words. Use at most two short items per list.
 
     Format:
 
@@ -116,10 +111,7 @@ def critic_agent(goal, task, research_result):
     """
     increment("critic")
 
-    response = llm.invoke(prompt)
-
-    # print("\nRaw Critic Response:\n")
-    # print(response.content)
+    response = invoke_model(llm, prompt, response_format={"type": "json_object"})
 
     cleaned_response = response.content.strip()
 
@@ -136,10 +128,11 @@ def critic_agent(goal, task, research_result):
     try:
         result = json.loads(cleaned_response)
 
-    except Exception as e:
+    except json.JSONDecodeError as error:
+        raise StepError("invalid_response") from error
 
-        print("\nJSON ERROR\n")
-        print(cleaned_response)
-        raise e
+    score = result.get("score") if isinstance(result, dict) else None
+    if type(score) not in (int, float) or not 1 <= score <= 10:
+        raise StepError("invalid_response")
 
     return result

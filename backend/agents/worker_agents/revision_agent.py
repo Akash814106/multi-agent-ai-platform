@@ -1,16 +1,9 @@
-from backend.utils.env_loader import *
-import os
-from langchain_groq import ChatGroq
 from backend.utils.api_counter import increment
+from backend.utils.chat_events import invoke_model
+from backend.utils.groq_client import create_groq_client
 
 
-groq_api_key4 = os.getenv("GROQ_API_KEY4")
-
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    # model="llama-3.1-8b-instant",
-    api_key=groq_api_key4
-)
+llm = create_groq_client(4)
 
 def revision_agent(goal, task, research_output, critic_feedback):
 
@@ -51,6 +44,6 @@ def revision_agent(goal, task, research_output, critic_feedback):
     """
 
     increment("revision")
-    response = llm.invoke(prompt)
+    response = invoke_model(llm, prompt, max_tokens=650)
 
     return response.content

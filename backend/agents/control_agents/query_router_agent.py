@@ -1,17 +1,11 @@
-from backend.utils.env_loader import *
-import os
 import json
-from langchain_groq import ChatGroq
 from backend.utils.api_counter import increment
+from backend.utils.chat_events import invoke_model
+from backend.utils.groq_client import create_groq_client
+from backend.utils.provider_errors import StepError
 
 
-groq_api_key1 = os.getenv("GROQ_API_KEY1")
-
-llm = ChatGroq(
-    model = "llama-3.3-70b-versatile",
-    # model="llama-3.1-8b-instant",
-    api_key= groq_api_key1
-)
+llm = create_groq_client(1)
 
 def query_router_agent(user_query):
 
@@ -38,6 +32,8 @@ def query_router_agent(user_query):
     - Questions about previous conversations
     - Questions asking what the AI remembers
     - Questions requiring only one concise answer
+    - Basic conceptual distinctions that can be explained in a few sentences,
+      such as the difference between supervised and unsupervised learning
     - Follow-up questions that do not require research
 
     Examples:
@@ -83,7 +79,7 @@ def query_router_agent(user_query):
 
     - The user requests research
     - Multiple topics must be investigated
-    - Comparison is required
+    - The user requests a detailed or multi-criteria comparison, or comparison across several contexts
     - Planning is required
     - Step-by-step learning is required
     - Architecture design
@@ -132,10 +128,9 @@ def query_router_agent(user_query):
     """
    
     increment("query_router")
-    response = llm.invoke(prompt)
+    response = invoke_model(llm, prompt, max_tokens=180, response_format={"type": "json_object"})
 
-#    print("\nRaw response\n")
-#    print(response.content)
-   
     result = json.loads(response.content)
+    if not isinstance(result, dict) or result.get("decision") not in {"DIRECT_RESPONSE", "MULTI_AGENT_WORKFLOW"}:
+        raise StepError("invalid_response")
     return result

@@ -1,4 +1,6 @@
+import os
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 from backend.graph.state import AgentState
 
@@ -7,7 +9,7 @@ from backend.memory.chroma_memory import (
     save_memory,
 )
 
-from backend.workflows.task_processor import process_task
+from backend.workflows.task_processor import process_task, queue_research
 
 from backend.agents.control_agents.query_router_agent import (
     query_router_agent,
@@ -30,27 +32,38 @@ from backend.agents.worker_agents.planner_agent import (
 )
 
 from backend.agents.worker_agents.summary_agent import (
-    summary_agent,
+    synthesize_answer,
 )
 
 from backend.agents.worker_agents.direct_response_agent import (
     direct_response_agent,
 )
 
+from backend.utils.chat_events import ChatCancelled, run_step
+from backend.utils.provider_errors import StepError
 from backend.utils.task_parser import extract_tasks
 
-MAX_WORKERS = 3
+def research_workers():
+    try:
+        return max(1, min(3, int(os.getenv("RESEARCH_MAX_WORKERS", "2"))))
+    except ValueError:
+        return 2
 
-# def query_router_node(state):
-#     print(">>> Entered query_router_node")
-#     router_result = query_router_agent(state["user_query"])
-#     print(">>> Router:", router_result)
-#     return {"router_decision": router_result["decision"]}
+
+def optional_step(*args):
+    try:
+        return run_step(*args)
+    except ChatCancelled:
+        raise
+    except Exception:
+        return None
+
 
 def query_router_node(state: AgentState):
 
-    router_result = query_router_agent(
-        state["user_query"]
+    router_result = run_step(
+        "Query Router Agent", "Chooses how to answer the request.",
+        query_router_agent, state["user_query"]
     )
 
     return {
@@ -59,8 +72,9 @@ def query_router_node(state: AgentState):
 
 def query_enhancement_node(state: AgentState):
 
-    enhanced_user_query = query_enhancement_agent(
-        state["user_query"]
+    enhanced_user_query = run_step(
+        "Query Enhancement Agent", "Clarifies the request for the workflow.",
+        query_enhancement_agent, state["user_query"]
     )
 
     return {
@@ -69,7 +83,8 @@ def query_enhancement_node(state: AgentState):
 
 def memory_node(state: AgentState):
 
-    memories = retrieve_memory(
+    memories = optional_step(
+        "Memory Retrieval", "Looks up relevant saved context.", retrieve_memory,
         state["enhanced_user_query"],
         state["current_user"],
     )
@@ -90,7 +105,8 @@ def memory_node(state: AgentState):
 
     if memory_context:
 
-        memory_decision = memory_router_agent(
+        memory_decision = optional_step(
+            "Memory Router Agent", "Decides whether saved context is relevant.", memory_router_agent,
 
             state["enhanced_user_query"],
 
@@ -98,7 +114,9 @@ def memory_node(state: AgentState):
 
         )
 
-        if memory_decision == "USE_MEMORY":
+        if not isinstance(memory_decision, str):
+            memory_decision = "SKIP_MEMORY"
+        if memory_decision.strip() == "USE_MEMORY":
 
             enhanced_query = f"""
 Memory:
@@ -120,7 +138,8 @@ Question:
 
 def planner_node(state: AgentState):
 
-    plan = planner_agent(
+    plan = run_step(
+        "Planner Agent", "Breaks the request into research tasks.", planner_agent,
         state.get(
             "enhanced_query",
             state["enhanced_user_query"]
@@ -151,6 +170,10 @@ def planner_node(state: AgentState):
             break
 
     tasks = extract_tasks(plan)
+    if not tasks:
+        raise StepError("invalid_response")
+    if len(tasks) > 4:
+        tasks = [*tasks[:3], "; ".join(tasks[3:])]
 
     return {
 
@@ -163,105 +186,55 @@ def planner_node(state: AgentState):
     }
 
 def parallel_task_node(state: AgentState):
-
-    all_results = []
-
-    summary_list = []
-
-    revision_executed = 0
-
-    revision_skipped = 0
-
-    failed_tasks = 0
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-
+    with ThreadPoolExecutor(max_workers=research_workers()) as executor:
         futures = [
-
             executor.submit(
-                process_task,
-                state["goal"],
-                task
+                copy_context().run, process_task, state["goal"], task,
+                research=queue_research(),
             )
-
             for task in state["tasks"]
-
         ]
+        results = [future.result() for future in futures]
 
-        for future in futures:
-
-            result = future.result()
-
-            all_results.append(result)
-
-            if result["status"] == "SUCCESS":
-
-                summary_list.append(
-                    result["summary"]
-                )
-
-                revision_executed += result[
-                    "revision_executed"
-                ]
-
-                revision_skipped += result[
-                    "revision_skipped"
-                ]
-
-            else:
-
-                failed_tasks += 1
-
-    metrics = dict(
-        state.get("metrics", {})
-    )
-
-    metrics["task_count"] = len(state["tasks"])
-
-    metrics["revision_executed"] = revision_executed
-
-    metrics["revision_skipped"] = revision_skipped
-
-    metrics["failed_tasks"] = failed_tasks
-
-    return {
-
-        "results": all_results,
-
-        "summary_list": summary_list,
-
-        "metrics": metrics,
-
+    metrics = {
+        **state.get("metrics", {}),
+        "task_count": len(results),
+        "revision_executed": sum(item["revision_executed"] for item in results),
+        "revision_skipped": sum(item["revision_skipped"] for item in results),
+        "failed_tasks": sum(item["status"] == "FAILED" for item in results),
     }
+    return {"results": results, "metrics": metrics}
+
 
 def final_summary_node(state: AgentState):
+    findings = []
+    gaps = []
+    for result in state["results"]:
+        task = result["task"]
+        if result["revision"]:
+            findings.append(
+                f"Task: {task}\nFindings: {result['revision']}\n"
+                f"Source excerpts: {result['sources'] or 'None available.'}"
+            )
+        if result["gaps"]:
+            gaps.append(f"{task}: {' '.join(result['gaps'])}")
 
-    if state["summary_list"]:
+    if not findings:
+        return {"final_summary": "", "completion_status": "failed"}
 
-        summary = "\n".join(
-            state["summary_list"]
-        )
-
-        final_summary = summary_agent(
-            summary
-        )
-
-    else:
-
-        final_summary = (
-            "Workflow failed. "
-            "No successful task summaries were generated."
-        )
-
+    answer = run_step(
+        "Summary Agent", "Writes the answer to the original question.",
+        synthesize_answer, state["user_query"], "\n\n".join(findings), "\n".join(gaps),
+    )
     return {
-
-        "final_summary": final_summary
-
+        "final_summary": answer,
+        "completion_status": "partial" if gaps else "complete",
     }
+
 
 def memory_save_node(state: AgentState):
 
-    if not state.get("final_summary"):
+    if not state.get("final_summary") or state.get("completion_status") == "partial":
 
         return {}
 
@@ -276,7 +249,9 @@ def memory_save_node(state: AgentState):
             state["user_query"]
         )
 
-    save_decision = memory_save_agent(
+    save_decision = optional_step(
+        "Memory Save Agent", "Decides whether the answer contains useful context to remember.",
+        memory_save_agent,
 
         query,
 
@@ -284,9 +259,10 @@ def memory_save_node(state: AgentState):
 
     )
 
-    if save_decision == "SAVE_MEMORY":
+    if isinstance(save_decision, str) and save_decision.strip() == "SAVE_MEMORY":
 
-        save_memory(
+        optional_step(
+            "Memory Storage", "Saves selected context for later questions.", save_memory,
 
             state["final_summary"],
 
@@ -298,7 +274,8 @@ def memory_save_node(state: AgentState):
 
 def direct_response_node(state: AgentState):
 
-    memories = retrieve_memory(
+    memories = optional_step(
+        "Memory Retrieval", "Looks up relevant saved context.", retrieve_memory,
 
         state["user_query"],
 
@@ -326,7 +303,8 @@ Question:
 {state["user_query"]}
 """
 
-    result = direct_response_agent(
+    result = run_step(
+        "Direct Response Agent", "Writes the answer directly.", direct_response_agent,
         enhanced_query
     )
 
@@ -335,6 +313,7 @@ Question:
         "memory_context": memory_context,
 
         "final_summary": result,
+        "completion_status": "complete",
 
     }
 

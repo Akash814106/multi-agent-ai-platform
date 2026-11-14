@@ -1,253 +1,137 @@
-import { useState } from "react";
-import { Send, LoaderCircle } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowUp, Menu, Square } from "lucide-react";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-
 import useAuth from "./hooks/useAuth";
-
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
-
 import useConversation from "./hooks/useConversation";
+import "./App.css";
 
-function App() {
+function accountFromToken(token) {
+    try {
+        const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+        const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes)).sub;
+    } catch {
+        return null;
+    }
+}
 
-  const [showRegister, setShowRegister] = useState(false);
+function Workspace({ user, account, token, logout }) {
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const menu = useRef(null);
+    const composer = useRef(null);
+    const chat = useConversation(user, account, token);
+    const conversation = chat.conversations.find(({ id }) => id === chat.activeId);
+    const activeRun = chat.live?.conversationId === chat.activeId ? chat.live : null;
 
-  const {
-  
-    user,
-  
-    token,
-  
-    login,
-  
-    register,
-  
-    logout,
-  
-  } = useAuth();
+    function closeSidebar() {
+        if (sidebarOpen) menu.current.focus();
+        setSidebarOpen(false);
+    }
 
-  const {
-
-    conversations,
-
-    activeConversation,
-
-    currentConversation,
-
-    loading,
-
-    thinking,
-
-    statusList,
-
-    query,
-
-    setQuery,
-
-    setActiveConversation,
-
-    createConversation,
-
-    renameConversation,
-
-    deleteConversation,
-
-    sendQuery,
-
-  } = useConversation(user);
-
-
-
-  if (!token) {
-
-    if (showRegister) {
-
-      return (
-
-        <Register
-
-          onRegister={async (username, email, password) => {
-
-            await register(
-
-              username,
-
-              email,
-
-              password
-
-            );
-
-            setShowRegister(false);
-
-          }}
-
-          goToLogin={() =>
-
-            setShowRegister(false)
-
-          }
-
-        />
-
-      );
-
+    function selectConversation(id) {
+        chat.selectConversation(id);
+        closeSidebar();
     }
 
     return (
-
-      <Login
-
-        onLogin={login}
-
-        goToRegister={() =>
-
-          setShowRegister(true)
-
-        }
-
-      />
-
-    );
-
-  }
-
-
-  return (
-
-    <div className="min-h-screen bg-slate-900 text-white flex">
-
-      <Sidebar
-
-        user = {user}
-
-        conversations={conversations}
-
-        activeConversation={activeConversation}
-
-        setActiveConversation={setActiveConversation}
-
-        createConversation={createConversation}
-
-        renameConversation={renameConversation}
-
-        deleteConversation={deleteConversation}
-
-      />
-
-      <main className="flex-1">
-
-        <div className="max-w-6xl mx-auto p-10">
-
-            <div className="flex justify-between items-center mb-8">
-
-                <div>
-
-                    <h1 className="text-5xl font-bold">
-                        AgentFlow
-                    </h1>
-
-                    <p className="text-gray-400 mt-2">
-                        Research • Build • Learn
-                    </p>
-
-                </div>
-
-                <button
-                    onClick={logout}
-                    className="bg-red-600 hover:bg-red-700 px-5 py-2 rounded-lg"
-                >
-                    Logout
-                </button>
-
-            </div>
-
-            <div className="mt-10">
-
-                <div className="bg-[#1B2435] border border-slate-700 rounded-3xl shadow-xl overflow-hidden">
-
-                    <div className="flex items-center px-6 py-5">
-
-                        <input
-                            value={query}
-                            disabled={loading}
-                            onChange={(e) => setQuery(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter" && !loading) {
-                                    sendQuery();
-                                }
-                            }}
-                            placeholder="Ask AgentFlow to research, explain, or solve..."
-                            className="flex-1 bg-transparent outline-none text-lg placeholder:text-slate-500"
-                        />
-
-                        <button
-                          onClick={sendQuery}
-                          disabled={loading}
-                          className="ml-4 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 transition-all duration-300 flex items-center justify-center"
-                      >
-
-                          {loading ? (
-                          
-                              <LoaderCircle
-                                  size={20}
-                                  className="animate-spin"
-                              />
-                          
-                          ) : (
-                          
-                              <Send size={20} />
-                          
-                          )}
-
-                      </button>
-                          
-                    </div>
-                          
-                    <div className="flex justify-between items-center border-t border-slate-700 px-6 py-3 text-sm text-slate-400">
-                          
-                        <span>
-                            <span className="font-semibold text-white">Press Enter to send</span>
-                        </span>
-                          
-                        <span className="flex items-center gap-2">
-                          
-                            <span
-                                className={`w-2 h-2 rounded-full ${
-                                    loading
-                                        ? "bg-yellow-400 animate-pulse"
-                                        : "bg-green-400"
-                                }`}
-                            />
-
-                            {loading ? "Agents Working..." : "Ready"}
-                              
-                        </span>
-                              
-                    </div>
-                              
-                </div>
-                              
-            </div>
-                              
-            <ChatView
-                loading={loading}
-                thinking={thinking}
-                statusList={statusList}
-                conversation={currentConversation}
+        <div className="workspace" onKeyDown={(event) => {
+            if (event.key === "Escape" && sidebarOpen) closeSidebar();
+        }}>
+            {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" tabIndex={-1}
+                onClick={closeSidebar} />}
+            <Sidebar
+                user={user}
+                conversations={chat.conversations}
+                activeId={chat.activeId}
+                selectConversation={selectConversation}
+                renameConversation={chat.renameConversation}
+                deleteConversation={chat.deleteConversation}
+                mobileOpen={sidebarOpen}
+                close={closeSidebar}
+                logout={logout}
             />
 
+            <main className="workspace-main">
+                <header className="workspace-header">
+                    <button className="icon-button mobile-menu" ref={menu} type="button" aria-label="Open navigation"
+                        aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={() => setSidebarOpen(true)}>
+                        <Menu size={22} />
+                    </button>
+                    <h1>Chat Workspace</h1>
+                </header>
+
+                <ChatView
+                    key={chat.activeId ?? "new"}
+                    messages={conversation?.messages ?? []}
+                    live={activeRun}
+                    busy={Boolean(chat.live)}
+                    retry={chat.retry}
+                    selectPrompt={(prompt) => {
+                        chat.setQuery(prompt);
+                        composer.current.focus();
+                    }}
+                />
+
+                <footer className="composer-region">
+                    {chat.storageError && <p className="storage-error" role="status">Chat history could not be saved on this device.</p>}
+                    <form className="composer" onSubmit={(event) => {
+                        event.preventDefault();
+                        chat.sendQuery();
+                    }}>
+                        <textarea
+                            ref={composer}
+                            rows={1}
+                            aria-label="Message AgentFlow AI"
+                            placeholder="Message AgentFlow AI"
+                            value={chat.query}
+                            onChange={(event) => chat.setQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                                    event.preventDefault();
+                                    if (!event.repeat) chat.sendQuery();
+                                }
+                            }}
+                        />
+                        {chat.live ? (
+                            <button className="send-button" type="button" aria-label="Stop response" title="Stop response"
+                                onClick={chat.cancel}>
+                                <Square size={16} fill="currentColor" />
+                            </button>
+                        ) : (
+                            <button className="send-button" type="submit" aria-label="Send message" title="Send message"
+                                disabled={!chat.query.trim()}>
+                                <ArrowUp size={20} />
+                            </button>
+                        )}
+                    </form>
+                    <p className="composer-hint">
+                        {chat.live && !activeRun ? "A response is running in another chat." : "Enter to send · Shift+Enter for a new line"}
+                    </p>
+                </footer>
+            </main>
         </div>
-                              
-      </main>
-
-    </div>
-
-  );
-
+    );
 }
 
-export default App;
+export default function App() {
+    const [showRegister, setShowRegister] = useState(false);
+    const { user, token, login, register, logout } = useAuth();
+    const account = accountFromToken(token);
+
+    if (account) {
+        return <Workspace key={account} user={user} account={account} token={token} logout={logout} />;
+    }
+    if (showRegister) {
+        return (
+            <Register onRegister={async (...fields) => {
+                await register(...fields);
+                setShowRegister(false);
+            }} goToLogin={() => setShowRegister(false)} />
+        );
+    }
+    return <Login onLogin={login} goToRegister={() => setShowRegister(true)} />;
+}
