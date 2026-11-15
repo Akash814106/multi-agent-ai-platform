@@ -88,6 +88,7 @@ class DocumentTests(unittest.TestCase):
         cls.addClassCleanup(store.vectors.cache_clear)
 
     def setUp(self):
+        self.enterContext(patch("backend.utils.request_trace.schedule_metrics"))
         self.collection.delete(where={"owner": {"$in": ["a", "b"]}})
         documents = mongomock.MongoClient().test.uploaded_documents
         mock = patch.object(store, "metadata", documents)
@@ -259,6 +260,52 @@ class DocumentTests(unittest.TestCase):
             events = frames(response)
             self.assertEqual(events[-1], terminal)
             self.assertNotIn("delta", [name for name, _ in events])
+
+    def test_novatech_structured_reply_is_rendered_as_cited_prose(self):
+        document = frames(self.upload("guardrail_test.txt", GUARDRAIL_DOCUMENT))[-1][1]
+        question = "According to the uploaded document, what is NovaTech's return policy?"
+        reply = json.dumps({
+            "policy": "NovaTech allows customers to return products within 30 days",
+            "refund_duration": "5 business days",
+            "citations": [1, 99],
+        })
+        for output in (reply, "```json\n" + reply + "\n```"):
+            with self.subTest(output=output), patch("backend.agents.worker_agents.direct_response_agent.llm") as model:
+                model.stream.return_value = (SimpleNamespace(text=output[i:i + 3]) for i in range(0, len(output), 3))
+                events = frames(self.answer([document["id"]], question=question))
+                system, user = model.stream.call_args.args[0]
+                self.assertIn("Do not return an object, JSON, or a code fence", system.content)
+                self.assertEqual(json.loads(user.content)["question"], question)
+            self.assertNotIn("delta", [name for name, _ in events])
+            name, done = events[-1]
+            self.assertEqual(name, "done")
+            self.assertIn("NovaTech allows customers to return products within 30 days.", done["answer"])
+            self.assertIn("[1]", done["answer"])
+            self.assertNotIn("[99]", done["answer"])
+            self.assertNotIn("BLUE_SQUARE", done["answer"])
+            self.assertNotIn('"policy"', done["answer"])
+            self.assertEqual([(item["id"], item["filename"]) for item in done["sources"]], [(1, "guardrail_test.txt")])
+
+    def test_novatech_explicit_json_preserves_fields_and_validates_citations(self):
+        document = frames(self.upload("guardrail_test.txt", GUARDRAIL_DOCUMENT))[-1][1]
+        question = "According to the uploaded document, what is NovaTech's return policy? Respond in JSON."
+        data = {"policy": "Returns within 30 days.", "citations": [99, 1, 1]}
+        for ids in ([99, 1, 1], [99]):
+            data["citations"] = ids
+            with self.subTest(ids=ids), patch("backend.agents.worker_agents.direct_response_agent.llm") as model:
+                model.stream.return_value = (SimpleNamespace(text=json.dumps(data)) for _ in range(1))
+                events = frames(self.answer([document["id"]], question=question))
+                self.assertIn("explicitly requests JSON", model.stream.call_args.args[0][0].content)
+            self.assertNotIn("delta", [name for name, _ in events])
+            name, done = events[-1]
+            if 1 in ids:
+                self.assertEqual(name, "done")
+                code = done["answer"].removeprefix("```json\n").removesuffix("\n```")
+                self.assertEqual(json.loads(code), {**data, "citations": [1]})
+                self.assertEqual([source["id"] for source in done["sources"]], [1])
+            else:
+                self.assertEqual(name, "error")
+                self.assertIn("did not cite", done["message"])
 
     def test_partial_delete_hides_document_and_can_retry(self):
         document = frames(self.upload("policy.txt", FACT.encode()))[-1][1]

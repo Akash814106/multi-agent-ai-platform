@@ -3,7 +3,7 @@ import { Activity, History, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen
 
 export default function Sidebar({
     user, conversations, activeId, selectConversation, renameConversation, deleteConversation,
-    mobileOpen, collapsed, toggleCollapsed, close, logout,
+    mobileOpen, collapsed, toggleCollapsed, close, logout, view, navigate,
 }) {
     const [editingId, setEditingId] = useState(null);
     const [title, setTitle] = useState("");
@@ -83,12 +83,15 @@ export default function Sidebar({
             </button>
 
             <nav className="workspace-nav" aria-label="Workspace">
-                <button className="nav-item current" type="button" aria-current="page" aria-label="Chat Workspace"
-                    data-tooltip="Chat Workspace" onClick={close}>
+                <button className={`nav-item${view === "chat" ? " current" : ""}`} type="button"
+                    aria-current={view === "chat" ? "page" : undefined} aria-label="Chat Workspace"
+                    data-tooltip="Chat Workspace" onClick={() => navigate("chat")}>
                     <MessageSquare size={16} /> <span className="sidebar-label">Chat Workspace</span>
                 </button>
-                <button className="nav-item sidebar-observability" type="button" disabled>
-                    <Activity size={16} /> Observability <span className="coming-soon">Soon</span>
+                <button className={`nav-item${view === "observability" ? " current" : ""}`} type="button"
+                    aria-current={view === "observability" ? "page" : undefined} aria-label="Observability"
+                    data-tooltip="Observability" onClick={() => navigate("observability")}>
+                    <Activity size={16} /> <span className="sidebar-label">Observability</span>
                 </button>
                 <button className="nav-item rail-history" type="button" aria-label="Recent chats" data-tooltip="Recent chats"
                     onClick={() => {

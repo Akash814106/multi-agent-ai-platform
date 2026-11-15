@@ -3,6 +3,7 @@ import { ArrowUp, Menu, Square } from "lucide-react";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import Observability from "./pages/Observability";
 import useAuth from "./hooks/useAuth";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
@@ -23,6 +24,7 @@ function accountFromToken(token) {
 function Workspace({ user, account, token, logout }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [view, setView] = useState("chat");
     const [selectedDocuments, setSelectedDocuments] = useState([]);
     const menu = useRef(null);
     const restoreMenuFocus = useRef(false);
@@ -51,6 +53,7 @@ function Workspace({ user, account, token, logout }) {
     }
 
     function selectConversation(id) {
+        setView("chat");
         chat.selectConversation(id);
         setSelectedDocuments([]);
         closeSidebar();
@@ -72,6 +75,11 @@ function Workspace({ user, account, token, logout }) {
                 toggleCollapsed={() => setSidebarCollapsed((value) => !value)}
                 close={closeSidebar}
                 logout={logout}
+                view={view}
+                navigate={(destination) => {
+                    setView(destination);
+                    closeSidebar();
+                }}
             />
 
             <main className="workspace-main" inert={sidebarOpen}>
@@ -83,9 +91,11 @@ function Workspace({ user, account, token, logout }) {
                         }}>
                         <Menu size={22} />
                     </button>
-                    <h1>Chat Workspace</h1>
+                    <h1>{view === "chat" ? "Chat Workspace" : "Observability"}</h1>
                 </header>
 
+                {view === "observability" && <Observability token={token} />}
+                <div className="chat-workspace-content" hidden={view !== "chat"}>
                 <ChatView
                     key={chat.activeId ?? "new"}
                     messages={conversation?.messages ?? []}
@@ -135,6 +145,7 @@ function Workspace({ user, account, token, logout }) {
                         {chat.live && !activeRun ? "A response is running in another chat." : "Enter to send · Shift+Enter for a new line"}
                     </p>
                 </footer>
+                </div>
             </main>
         </div>
     );

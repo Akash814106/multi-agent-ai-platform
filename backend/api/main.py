@@ -1,4 +1,5 @@
 import logging
+from threading import Event
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -9,6 +10,7 @@ from pymongo.errors import PyMongoError
 from backend.api.chat_stream import stream_chat
 from backend.api.documents import document_http_error, router as document_router
 from backend.api.models import ChatRequest
+from backend.api.observability import router as observability_router
 from backend.auth.dependencies import document_owner, get_current_claims
 from backend.documents.answers import answer_documents
 from backend.documents.extraction import DocumentError
@@ -27,9 +29,12 @@ from backend.auth.auth import (
 from backend.auth.jwt_handler import create_access_token
 from backend.utils.provider_errors import chat_failure_message, classify_error, log_failure
 from backend.utils.request_trace import RequestTrace, request_id
+from backend.utils.chat_events import ChatEvents, chat_events
+from backend.utils.telemetry import active_metrics
 
 app = FastAPI()
 app.include_router(document_router)
+app.include_router(observability_router)
 logger = logging.getLogger(__name__)
 
 app.add_middleware(
@@ -159,19 +164,32 @@ def chat(
 ):
     current_user = claims["sub"]
     owner = document_owner(claims) if request.document_ids else None
+    query = document_query(request) if request.document_ids else request.query
+    metrics = active_metrics.get()
+    if metrics:
+        metrics.begin(claims.get("user_id"), "document_rag" if request.document_ids else "general_chat")
+    context = chat_events.set(ChatEvents(metrics.activity, Event(), streaming=False)) if metrics else None
     try:
         result = (
-            answer_documents(document_query(request), owner, request.document_ids)
-            if request.document_ids else run_workflow(request.query, current_user)
+            answer_documents(query, owner, request.document_ids)
+            if request.document_ids else run_workflow(query, current_user)
         )
+        if metrics:
+            status = {"partial": "partial", "failed": "failed"}.get(result.get("completion_status"), "success")
+            metrics.finish(status, "workflow" if status == "failed" else None)
     except DocumentError as error:
+        if metrics:
+            metrics.finish("failed", "document_retrieval")
         raise document_http_error(error) from None
-    except HTTPException:
-        raise
     except Exception as error:
         category = classify_error(error)
+        if metrics:
+            metrics.finish("failed", category)
         log_failure("chat_workflow", error, category)
         raise HTTPException(status_code=502, detail=chat_failure_message(category)) from None
+    finally:
+        if context is not None:
+            chat_events.reset(context)
 
     return {
         "user": current_user,
@@ -197,6 +215,9 @@ async def chat_stream(
     owner = document_owner(claims) if request.document_ids else None
     if request.document_ids:
         query = document_query(request)
+    metrics = active_metrics.get()
+    if metrics:
+        metrics.begin(claims.get("user_id"), "document_rag" if request.document_ids else "general_chat")
 
     return StreamingResponse(
         stream_chat(query, claims["sub"], owner=owner, document_ids=request.document_ids),

@@ -11,6 +11,7 @@ from backend.documents.extraction import DocumentError
 from backend.utils.chat_events import ChatCancelled, ChatEvents, chat_events
 from backend.utils.provider_errors import chat_failure_message, classify_error, log_failure
 from backend.utils.request_trace import request_id
+from backend.utils.telemetry import active_metrics
 from backend.workflows.multi_agent_workflow import run_workflow
 
 
@@ -24,10 +25,11 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
     stopped = Event()
     deadline = monotonic() + CHAT_DEADLINE_SECONDS
     identifier = request_id.get()
+    metrics = active_metrics.get()
 
-    def emit(name, data):
+    def emit(name, data, status=None, category=None):
         if not stopped.is_set():
-            loop.call_soon_threadsafe(queue.put_nowait, (name, data))
+            loop.call_soon_threadsafe(queue.put_nowait, (name, data, status, category))
 
     def execute():
         started = monotonic()
@@ -35,6 +37,8 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
         outcome = "failed"
 
         def report(name, data):
+            if metrics and not stopped.is_set():
+                metrics.activity(name, data)
             if name == "activity" and "duration_ms" in data and not stopped.is_set():
                 with events.lock:
                     stats["agent_executions"] += 1
@@ -52,22 +56,23 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
             answer = result.get("final_summary")
             outcome = result["completion_status"]
             if outcome == "failed" or not answer:
-                emit("error", {"message": "No research tasks produced usable findings. Please retry."})
+                emit("error", {"message": "No research tasks produced usable findings. Please retry."},
+                     "failed", "workflow")
             else:
                 payload = {"answer": answer}
                 if document_ids:
                     payload["sources"] = result["sources"]
                 if outcome == "partial":
                     payload["completion_status"] = "partial"
-                emit("done", payload)
+                emit("done", payload, "partial" if outcome == "partial" else "success")
         except ChatCancelled:
             outcome = "cancelled"
         except DocumentError as error:
-            emit("error", {"message": str(error)})
+            emit("error", {"message": str(error)}, "failed", "document_retrieval")
         except Exception as error:
             category = classify_error(error)
             log_failure("chat_workflow", error, category)
-            emit("error", {"message": chat_failure_message(category)})
+            emit("error", {"message": chat_failure_message(category)}, "failed", category)
         finally:
             logger.info(
                 "request_id=%s workflow outcome=%s elapsed_ms=%d stats=%s provider_counts=%s",
@@ -83,14 +88,18 @@ async def stream_chat(query, user, *, owner=None, document_ids=()):
             if remaining <= 0:
                 name, data = "error", {"message": chat_failure_message("timeout")}
                 stopped.set()
+                if metrics:
+                    metrics.finish("timeout", "workflow_timeout")
                 logger.warning("request_id=%s workflow deadline reached", identifier)
                 yield sse_frame(name, data, identifier)
                 break
             try:
-                name, data = await asyncio.wait_for(queue.get(), timeout=min(15, remaining))
+                name, data, status, category = await asyncio.wait_for(queue.get(), timeout=min(15, remaining))
             except TimeoutError:
                 yield ": heartbeat\n\n"
                 continue
+            if metrics and status:
+                metrics.finish(status, category)
             yield sse_frame(name, data, identifier)
             if name in {"done", "error"}:
                 break

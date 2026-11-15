@@ -18,6 +18,7 @@ class ChatCancelled(Exception):
 class ChatEvents:
     emit: Callable[[str, dict], None]
     stopped: Event
+    streaming: bool = True
 
     def __post_init__(self):
         self.ids = count(1)
@@ -120,7 +121,7 @@ def invoke_model(llm, prompt, **kwargs):
 
 def final_answer(llm, prompt, *, stream_answer=True, retry_window=3, stream_text=None, **kwargs):
     events = chat_events.get()
-    if events is None or not stream_answer:
+    if events is None or not events.streaming or not stream_answer:
         text = invoke_model(llm, prompt, **kwargs).content
         if not isinstance(text, str) or not text.strip():
             raise StepError("invalid_response")

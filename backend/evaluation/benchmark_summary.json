@@ -1,0 +1,11 @@
+{
+  "dataset_version": "1.0",
+  "embedding_model": "all-MiniLM-L6-v2 (Chroma ONNX)",
+  "top_k": 5,
+  "evaluated_at": "2026-11-15T17:04:48.022237+00:00",
+  "total_cases": 8,
+  "passed_cases": 8,
+  "recall_at_k": 1.0,
+  "precision_at_k": 0.9166666666666666,
+  "hit_rate_at_k": 1.0
+}

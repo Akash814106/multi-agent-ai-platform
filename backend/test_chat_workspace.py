@@ -46,6 +46,7 @@ def events_from(response):
 
 class ChatStreamTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("backend.utils.request_trace.schedule_metrics"))
         self.client = TestClient(main.app)
         self.user = "workspace-test@example.com"
         token = create_access_token({"sub": self.user})

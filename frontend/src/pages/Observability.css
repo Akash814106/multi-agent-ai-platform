@@ -1,0 +1,67 @@
+.observability {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 28px clamp(14px, 3vw, 42px) 38px;
+    display: grid;
+    align-content: start;
+    gap: 16px;
+}
+.observability > * { min-width: 0; width: 100%; max-width: 1240px; justify-self: center; }
+.obs-toolbar, .obs-filters { display: flex; align-items: end; gap: 12px; }
+.obs-toolbar { justify-content: space-between; flex-wrap: wrap; }
+.obs-toolbar h2 { font-size: clamp(1.35rem, 3vw, 1.9rem); font-weight: 700; letter-spacing: -.03em; }
+.obs-filters label { display: grid; gap: 4px; color: var(--muted); font-size: .75rem; }
+.obs-filters select, .obs-filters button, .obs-pagination button {
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: #edf2fc;
+    font-size: .82rem;
+}
+.obs-filters select, .obs-pagination button { padding: 0 10px; }
+.obs-filters select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.obs-stats, .obs-pair, .obs-benchmark { display: grid; gap: 10px; }
+.obs-stats { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+.obs-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.obs-card { min-width: 0; padding: 15px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.obs-card h2 { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; font-size: .98rem; font-weight: 700; }
+.obs-card h2 svg, .obs-stat svg { color: var(--cyan); }
+.obs-stat span { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .78rem; }
+.obs-stat strong { display: block; margin-top: 6px; font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.obs-note { color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.obs-error { color: #ffc0c1; font-size: .84rem; }
+.obs-empty { color: var(--muted); font-size: .86rem; }
+.obs-workflow { margin-bottom: 10px; font-size: .83rem; }
+.obs-workflow > div:first-child { display: flex; justify-content: space-between; }
+.obs-track { margin-top: 5px; height: 4px; background: #27354c; border-radius: 8px; overflow: hidden; }
+.obs-track span { display: block; height: 100%; background: var(--cyan); }
+.obs-table-wrap { overflow-x: auto; }
+.observability table { width: 100%; border-collapse: collapse; font-size: .82rem; font-variant-numeric: tabular-nums; }
+.observability :is(th, td) { padding: 8px 9px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.observability th { color: var(--muted); font-weight: 600; }
+.observability td:first-child { width: 30%; }
+.obs-status { display: inline-block; padding: 3px 7px; border-radius: 6px; background: #26384d; color: #cad9ef; font-size: .75rem; }
+.obs-success, .obs-completed { background: #183b3c; color: #a1eed6; }
+.obs-failed, .obs-timeout { background: #462c39; color: #ffc0c1; }
+.obs-partial { background: #3c3528; color: #f2d28f; }
+.obs-id { display: inline-flex; align-items: center; gap: 4px; color: var(--cyan); }
+.obs-id:hover { text-decoration: underline; }
+.obs-request-detail { white-space: normal; overflow-wrap: anywhere; padding: 8px 0; }
+.obs-request-detail code { margin-left: 5px; }
+.obs-steps { margin-top: 8px; }
+.obs-steps li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 8px; padding: 5px 0; }
+.obs-steps small { display: block; color: var(--muted); }
+.obs-pagination { display: flex; align-items: center; justify-content: end; gap: 9px; margin-top: 10px; font-size: .78rem; }
+.obs-pagination button:disabled { opacity: .45; }
+.obs-benchmark { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 7px; }
+.obs-benchmark div { color: var(--muted); font-size: .8rem; }
+.obs-benchmark strong { display: block; color: #edf2fc; font-size: 1.18rem; font-weight: 700; }
+
+@media (max-width: 760px) {
+    .observability { padding-top: 16px; gap: 12px; }
+    .obs-card { padding: 12px; }
+    .obs-pair { grid-template-columns: 1fr; }
+    .obs-request-detail { max-width: 75vw; }
+}

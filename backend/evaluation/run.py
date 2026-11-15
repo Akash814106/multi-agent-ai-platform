@@ -1,4 +1,5 @@
 import argparse
+from datetime import UTC, datetime
 import json
 import re
 from functools import partial
@@ -210,9 +211,21 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate document retrieval with real local embeddings and synthetic data.")
     parser.add_argument("--top-k", type=int, choices=range(1, 9), default=5)
     parser.add_argument("--output", type=Path, default=Path("rag_eval_results.json"))
+    parser.add_argument("--publish-summary", action="store_true",
+                        help="Refresh the dashboard's summary of this synthetic dataset.")
     args = parser.parse_args()
     report = run_evaluation(args.top_k)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if args.publish_summary:
+        summary = {
+            "dataset_version": report["dataset_version"], "embedding_model": report["embedding_model"],
+            "top_k": args.top_k, "evaluated_at": datetime.now(UTC).isoformat(),
+            **{key: report["metrics"][key] for key in (
+                "total_cases", "passed_cases", "recall_at_k", "precision_at_k", "hit_rate_at_k",
+            )},
+        }
+        path = Path(__file__).with_name("benchmark_summary.json")
+        path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"Dataset {report['dataset_version']} | {report['embedding_model']} | K={args.top_k}")
     for metric, value in report["metrics"].items():
         print(f"{metric}: {value if value is not None else 'n/a'}")
